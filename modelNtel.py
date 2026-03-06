@@ -91,6 +91,11 @@ def animation3dyes(all_data):
             self.reset_btn.setToolTip("Сбросить симуляцию к начальным условиям")
             control_layout.addWidget(self.reset_btn)
 
+            self.size_mode_btn = QPushButton("Размер тел: выкл")
+            self.size_mode_btn.clicked.connect(self.toggle_size_mode)
+            self.size_mode_btn.setToolTip("Включить/выключить отображение тел с учётом их радиуса")
+            control_layout.addWidget(self.size_mode_btn)
+
             left_layout.addLayout(control_layout)
 
             right_widget = QWidget()
@@ -153,6 +158,26 @@ def animation3dyes(all_data):
 
             self.trajectories = [[] for _ in range(self.n_bodies)]
 
+            import math
+            radii = [body[7] if len(body) > 7 else 1.0 for body in self.bodies]
+            min_r = min(radii)
+            max_r = max(radii)
+            def radius_to_scatter_size(r):
+                if max_r == min_r:
+                    return 100
+                log_min = math.log10(max(min_r, 1e-30))
+                log_max = math.log10(max(max_r, 1e-30))
+                if log_max == log_min:
+                    return 100
+                t = (math.log10(max(r, 1e-30)) - log_min) / (log_max - log_min)
+                return 30 + 470 * t
+            def radius_to_marker_size(r):
+                return max(3, math.sqrt(radius_to_scatter_size(r)) * 0.5)
+
+            self.body_sizes_3d = [radius_to_scatter_size(r) for r in radii]
+            self.body_sizes_2d = [radius_to_marker_size(r) for r in radii]
+            self.size_mode = False
+
             self.scatters = []
             for i in range(self.n_bodies):
                 scatter = self.ax.scatter([self.bodies[i][0]], [self.bodies[i][1]], [self.bodies[i][2]],
@@ -190,7 +215,9 @@ def animation3dyes(all_data):
             self.ax2d.set_xlim(-self.current_limits_2d, self.current_limits_2d)
             self.ax2d.set_ylim(-self.current_limits_2d, self.current_limits_2d)
 
-            self.ax.legend(fontsize=7, loc='upper left')
+            legend = self.ax.legend(fontsize=7, loc='upper left')
+            for handle in legend.legend_handles:
+                handle.set_sizes([80])
 
             self.update_coordinates_display()
 
@@ -362,38 +389,40 @@ def animation3dyes(all_data):
             n = len(l)
             new_l = [body.copy() for body in l]
 
-            accelerations = []
-            for i in range(n):
-                ax, ay, az = 0, 0, 0
-                for j in range(n):
-                    if i != j:
-                        dx = l[j][0] - l[i][0]
-                        dy = l[j][1] - l[i][1]
-                        dz = l[j][2] - l[i][2]
+            substeps = 100
+            sub_dt = se.dt / substeps
 
-                        r_sq = dx*dx + dy*dy + dz*dz
-                        r = np.sqrt(r_sq)
+            for _ in range(substeps):
+                accelerations = []
+                for i in range(n):
+                    ax, ay, az = 0.0, 0.0, 0.0
+                    for j in range(n):
+                        if i != j:
+                            dx = new_l[j][0] - new_l[i][0]
+                            dy = new_l[j][1] - new_l[i][1]
+                            dz = new_l[j][2] - new_l[i][2]
 
-                        force_magnitude = G * l[j][6] / (r_sq * r)
+                            r_sq = dx*dx + dy*dy + dz*dz
+                            r = np.sqrt(r_sq)
 
-                        ax += force_magnitude * dx
-                        ay += force_magnitude * dy
-                        az += force_magnitude * dz
+                            f = G * new_l[j][6] / (r_sq * r)
 
-                accelerations.append((ax, ay, az))
+                            ax += f * dx
+                            ay += f * dy
+                            az += f * dz
+                    accelerations.append((ax, ay, az))
 
-            for i in range(n):
-                ax, ay, az = accelerations[i]
+                for i in range(n):
+                    ax, ay, az = accelerations[i]
+                    new_l[i][3] += ax * sub_dt
+                    new_l[i][4] += ay * sub_dt
+                    new_l[i][5] += az * sub_dt
 
-                new_l[i][3] = l[i][3] + ax * se.dt
-                new_l[i][4] = l[i][4] + ay * se.dt
-                new_l[i][5] = l[i][5] + az * se.dt
+                    new_l[i][0] += new_l[i][3] * sub_dt
+                    new_l[i][1] += new_l[i][4] * sub_dt
+                    new_l[i][2] += new_l[i][5] * sub_dt
 
-                new_l[i][0] = l[i][0] + new_l[i][3] * se.dt
-                new_l[i][1] = l[i][1] + new_l[i][4] * se.dt
-                new_l[i][2] = l[i][2] + new_l[i][5] * se.dt
-
-            if self.frame_count % 100 == 0:
+            if self.frame_count % 100 == 0 and n >= 2:
                 print(f"Frame {self.frame_count}:")
                 print(f"  Body 0 pos: ({l[0][0]:.2e}, {l[0][1]:.2e})")
                 print(f"  Body 1 pos: ({l[1][0]:.2e}, {l[1][1]:.2e})")
@@ -554,6 +583,24 @@ def animation3dyes(all_data):
                 self.is_running = True
                 self.timer.start(50)
 
+        def toggle_size_mode(self):
+            self.size_mode = not self.size_mode
+            if self.size_mode:
+                self.size_mode_btn.setText("Размер тел: вкл")
+                self.size_mode_btn.setStyleSheet("background-color: #ADD8E6;")
+                for i, scatter in enumerate(self.scatters):
+                    scatter.set_sizes([self.body_sizes_3d[i]])
+                for i, scatter_2d in enumerate(self.scatters_2d):
+                    scatter_2d.set_markersize(self.body_sizes_2d[i])
+            else:
+                self.size_mode_btn.setText("Размер тел: выкл")
+                self.size_mode_btn.setStyleSheet("")
+                for scatter in self.scatters:
+                    scatter.set_sizes([100])
+                for scatter_2d in self.scatters_2d:
+                    scatter_2d.set_markersize(6)
+            self.canvas.draw_idle()
+
     dialog = AnimationDialog(all_data)
     dialog.exec_()
 
@@ -591,7 +638,8 @@ class ObjectEditor(QWidget):
             'name': 'Новый объект',
             'x': 0, 'y': 0, 'z': 0,
             'vx': 0, 'vy': 0, 'vz': 0,
-            'mass': 1.0
+            'mass': 1.0,
+            'radius': 1.0
         }
         self.init_ui()
 
@@ -629,6 +677,10 @@ class ObjectEditor(QWidget):
         self.mass_edit.set_value(self.obj_data['mass'])
         layout.addRow("Масса:", self.mass_edit)
 
+        self.radius_edit = ScientificLineEdit()
+        self.radius_edit.set_value(self.obj_data.get('radius', 1.0))
+        layout.addRow("Радиус:", self.radius_edit)
+
         self.setLayout(layout)
 
     def get_data(self):
@@ -647,6 +699,10 @@ class ObjectEditor(QWidget):
         if mass is None or mass <= 0:
             mass = 1.0
 
+        radius = self.radius_edit.get_value()
+        if radius is None or radius <= 0:
+            radius = 1.0
+
         return {
             'name': name,
             'x': x,
@@ -655,7 +711,8 @@ class ObjectEditor(QWidget):
             'vx': vx,
             'vy': vy,
             'vz': vz,
-            'mass': mass
+            'mass': mass,
+            'radius': radius
         }
 
 class SettingsDialog(QDialog):
@@ -1057,7 +1114,8 @@ class SimulationMenu(QMainWindow):
             'name': f'Объект {len(self.objects) + 1}',
             'x': 0, 'y': 0, 'z': 0,
             'vx': 0, 'vy': 0, 'vz': 0,
-            'mass': 1.0
+            'mass': 1.0,
+            'radius': 1.0
         }
         self.objects.append(new_obj)
         self.load_objects()
@@ -1137,7 +1195,8 @@ class SimulationMenu(QMainWindow):
             all_data.append([
                 obj['x'], obj['y'], obj['z'],
                 obj['vx'], obj['vy'], obj['vz'],
-                obj['mass']
+                obj['mass'],
+                obj.get('radius', 1.0)
             ])
 
         se.dt = self.settings.get('dt', 0.1)
