@@ -29,6 +29,49 @@ SELECTED_SAVE = None
 global all_data
 all_data = []
 
+PRESETS = {
+    'Двойная звезда': {
+        'dt': 86400,
+        'objects': [
+            {'name': 'Звезда A', 'x': -1.5e11, 'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy': -21093.0, 'vz': 0.0, 'mass': 2e30, 'radius': 7e8},
+            {'name': 'Звезда B', 'x':  1.5e11, 'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy':  21093.0, 'vz': 0.0, 'mass': 2e30, 'radius': 7e8},
+        ]
+    },
+    'Земля — Луна': {
+        'dt': 3600,
+        'objects': [
+            {'name': 'Земля', 'x': 0.0, 'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy': -12.56, 'vz': 0.0, 'mass': 5.972e24, 'radius': 6.371e6},
+            {'name': 'Луна',  'x': 3.844e8, 'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy':  1022.0, 'vz': 0.0, 'mass': 7.342e22, 'radius': 1.737e6},
+        ]
+    },
+    'Солнце — Земля — Юпитер': {
+        'dt': 86400,
+        'objects': [
+            {'name': 'Солнце',  'x': 0.0,      'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy':     0.0, 'vz': 0.0, 'mass': 1.989e30, 'radius': 6.96e8},
+            {'name': 'Земля',   'x': 1.496e11,  'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy': 29780.0, 'vz': 0.0, 'mass': 5.972e24, 'radius': 6.371e6},
+            {'name': 'Юпитер',  'x': 7.783e11,  'y': 0.0, 'z': 0.0,
+             'vx': 0.0, 'vy': 13070.0, 'vz': 0.0, 'mass': 1.898e27, 'radius': 7.149e7},
+        ]
+    },
+    'Три тела (треугольник Лагранжа)': {
+        'dt': 3600,
+        'objects': [
+            {'name': 'Тело 1', 'x': 0.0,    'y':  5.7735e10, 'z': 0.0,
+             'vx': -25837.0, 'vy':     0.0, 'vz': 0.0, 'mass': 1e30, 'radius': 7e8},
+            {'name': 'Тело 2', 'x': -5e10,  'y': -2.887e10,  'z': 0.0,
+             'vx':  12918.0, 'vy': -22360.0, 'vz': 0.0, 'mass': 1e30, 'radius': 7e8},
+            {'name': 'Тело 3', 'x':  5e10,  'y': -2.887e10,  'z': 0.0,
+             'vx':  12918.0, 'vy':  22360.0, 'vz': 0.0, 'mass': 1e30, 'radius': 7e8},
+        ]
+    },
+}
+
 def animation3dyes(all_data):
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
@@ -44,7 +87,14 @@ def animation3dyes(all_data):
             self.projection_plane = 'XY'
             self.simulation_history = []
             self.current_time = 0.0
+            self._alive = True
             self.init_ui()
+
+        def closeEvent(self, event):
+            self._alive = False
+            if hasattr(self, 'timer'):
+                self.timer.stop()
+            super().closeEvent(event)
 
         def init_ui(self):
             main_layout = QHBoxLayout()
@@ -61,8 +111,12 @@ def animation3dyes(all_data):
 
             left_layout.addWidget(self.canvas)
 
+            from PyQt5.QtWidgets import QCheckBox, QSlider
+            from PyQt5.QtCore import Qt as _Qt
+
             control_layout = QHBoxLayout()
             self.status_label = QLabel("Запуск симуляции...")
+            self.status_label.setFixedWidth(280)
             control_layout.addWidget(self.status_label)
             control_layout.addStretch()
 
@@ -71,30 +125,50 @@ def animation3dyes(all_data):
 
             self.projection_combo = QComboBox()
             self.projection_combo.addItems(['XY', 'XZ', 'YZ'])
+            self.projection_combo.setFixedWidth(60)
             self.projection_combo.currentTextChanged.connect(self.change_projection)
             control_layout.addWidget(self.projection_combo)
 
             control_layout.addStretch()
 
-            self.export_btn = QPushButton("Экспорт данных")
+            self.speed_label = QLabel("Скорость: 1x")
+            self.speed_label.setFixedWidth(90)
+            control_layout.addWidget(self.speed_label)
+
+            self.speed_slider = QSlider(_Qt.Horizontal)
+            self.speed_slider.setMinimum(1)
+            self.speed_slider.setMaximum(20)
+            self.speed_slider.setValue(1)
+            self.speed_slider.setFixedWidth(100)
+            self.speed_slider.setToolTip("Шагов физики за кадр (1–20)")
+            self.speed_slider.valueChanged.connect(
+                lambda v: self.speed_label.setText(f"Скорость: {v}x")
+            )
+            control_layout.addWidget(self.speed_slider)
+
+            control_layout.addStretch()
+
+            self.size_mode_chk = QCheckBox("Размер тел")
+            self.size_mode_chk.setToolTip("Отображать тела с учётом их радиуса")
+            self.size_mode_chk.stateChanged.connect(self.toggle_size_mode)
+            control_layout.addWidget(self.size_mode_chk)
+
+            self.export_btn = QPushButton("Экспорт")
             self.export_btn.clicked.connect(self.export_data)
             self.export_btn.setEnabled(False)
+            self.export_btn.setFixedWidth(80)
             control_layout.addWidget(self.export_btn)
 
             self.pause_btn = QPushButton("Пауза")
             self.pause_btn.clicked.connect(self.toggle_animation)
-            self.pause_btn.setMinimumWidth(100)
+            self.pause_btn.setFixedWidth(90)
             control_layout.addWidget(self.pause_btn)
 
             self.reset_btn = QPushButton("Сброс")
             self.reset_btn.clicked.connect(self.reset_simulation)
             self.reset_btn.setToolTip("Сбросить симуляцию к начальным условиям")
+            self.reset_btn.setFixedWidth(70)
             control_layout.addWidget(self.reset_btn)
-
-            self.size_mode_btn = QPushButton("Размер тел: выкл")
-            self.size_mode_btn.clicked.connect(self.toggle_size_mode)
-            self.size_mode_btn.setToolTip("Включить/выключить отображение тел с учётом их радиуса")
-            control_layout.addWidget(self.size_mode_btn)
 
             left_layout.addLayout(control_layout)
 
@@ -139,6 +213,34 @@ def animation3dyes(all_data):
             self.simulation_history = []
             self.current_time = 0.0
             self.save_to_history()
+
+            radii_init = [body[7] if len(body) > 7 else 1.0 for body in self.bodies]
+            min_r_init = min(radii_init) if radii_init else 1.0
+
+            # Минимальное начальное расстояние между телами
+            min_sep = float('inf')
+            for _a in range(len(self.bodies)):
+                for _b in range(_a + 1, len(self.bodies)):
+                    _dx = self.bodies[_a][0] - self.bodies[_b][0]
+                    _dy = self.bodies[_a][1] - self.bodies[_b][1]
+                    _dz = self.bodies[_a][2] - self.bodies[_b][2]
+                    _r = (_dx*_dx + _dy*_dy + _dz*_dz) ** 0.5
+                    if _r < min_sep:
+                        min_sep = _r
+            if min_sep == float('inf'):
+                min_sep = 1.0
+
+            # Softening = макс(0.5 * min_radius, 0.1% от min_separation)
+            softening_len = max(min_r_init * 0.5, min_sep * 0.001)
+            self.softening_eps2 = softening_len ** 2
+
+            # Минимальный радиус для обнаружения столкновений
+            # Если радиусы не заданы (=1.0), используем 1% от min_sep
+            self.collision_radii = []
+            for body in self.bodies:
+                r = body[7] if len(body) > 7 else 1.0
+                effective_r = max(r, min_sep * 0.01)
+                self.collision_radii.append(effective_r)
 
             self.setup_table()
 
@@ -392,10 +494,16 @@ def animation3dyes(all_data):
             substeps = 100
             sub_dt = se.dt / substeps
 
+            # Минимальные расстояния за кадр для обнаружения туннелирования
+            min_dist = {}
+            for _a in range(n):
+                for _b in range(_a + 1, n):
+                    min_dist[(_a, _b)] = float('inf')
+
             for _ in range(substeps):
                 accelerations = []
                 for i in range(n):
-                    ax, ay, az = 0.0, 0.0, 0.0
+                    acc_x, acc_y, acc_z = 0.0, 0.0, 0.0
                     for j in range(n):
                         if i != j:
                             dx = new_l[j][0] - new_l[i][0]
@@ -403,41 +511,48 @@ def animation3dyes(all_data):
                             dz = new_l[j][2] - new_l[i][2]
 
                             r_sq = dx*dx + dy*dy + dz*dz
-                            r = np.sqrt(r_sq)
+                            r_sq_soft = r_sq + self.softening_eps2
+                            r_soft = np.sqrt(r_sq_soft)
 
-                            f = G * new_l[j][6] / (r_sq * r)
+                            f = G * new_l[j][6] / (r_sq_soft * r_soft)
 
-                            ax += f * dx
-                            ay += f * dy
-                            az += f * dz
-                    accelerations.append((ax, ay, az))
+                            acc_x += f * dx
+                            acc_y += f * dy
+                            acc_z += f * dz
+
+                            # Фиксируем фактическое расстояние (без softening)
+                            if i < j:
+                                r_actual = np.sqrt(r_sq)
+                                key = (i, j)
+                                if r_actual < min_dist[key]:
+                                    min_dist[key] = r_actual
+
+                    accelerations.append((acc_x, acc_y, acc_z))
 
                 for i in range(n):
-                    ax, ay, az = accelerations[i]
-                    new_l[i][3] += ax * sub_dt
-                    new_l[i][4] += ay * sub_dt
-                    new_l[i][5] += az * sub_dt
+                    acc_x, acc_y, acc_z = accelerations[i]
+                    new_l[i][3] += acc_x * sub_dt
+                    new_l[i][4] += acc_y * sub_dt
+                    new_l[i][5] += acc_z * sub_dt
 
                     new_l[i][0] += new_l[i][3] * sub_dt
                     new_l[i][1] += new_l[i][4] * sub_dt
                     new_l[i][2] += new_l[i][5] * sub_dt
 
-            if self.frame_count % 100 == 0 and n >= 2:
-                print(f"Frame {self.frame_count}:")
-                print(f"  Body 0 pos: ({l[0][0]:.2e}, {l[0][1]:.2e})")
-                print(f"  Body 1 pos: ({l[1][0]:.2e}, {l[1][1]:.2e})")
-                print(f"  Distance: {np.sqrt((l[1][0]-l[0][0])**2 + (l[1][1]-l[0][1])**2):.2e}")
-
+            self.min_pair_distances = min_dist
             return new_l
 
         def update_animation(self):
-            if not self.is_running:
+            if not self._alive or not self.is_running:
                 return
 
-            self.frame_count += 1
-            self.current_time += se.dt
+            steps = self.speed_slider.value()
+            for _ in range(steps):
+                self.bodies = self.calcalt(self.bodies)
+                self.current_time += se.dt
 
-            self.bodies = self.calcalt(self.bodies)
+            self.handle_collisions()
+            self.frame_count += 1
 
             if self.frame_count % 10 == 0:
                 self.save_to_history()
@@ -447,8 +562,6 @@ def animation3dyes(all_data):
                 scatter._offsets3d = ([x], [y], [z])
 
                 self.trajectories[i].append((x, y, z))
-                if len(self.trajectories[i]) > self.trail_length:
-                    self.trajectories[i].pop(0)
 
                 if len(self.trajectories[i]) > 1:
                     x_traj = [point[0] for point in self.trajectories[i]]
@@ -508,7 +621,11 @@ def animation3dyes(all_data):
                 self.status_label.setText(f"Кадр: {self.frame_count} | Тела: {self.n_bodies} | Макс: {max_pos:.2e} м")
                 self.ax.set_title(f'3D Симуляция | Кадр: {self.frame_count}', fontsize=10)
 
-            self.canvas.draw_idle()
+            if self._alive:
+                try:
+                    self.canvas.draw_idle()
+                except RuntimeError:
+                    pass
 
         def update_time_display(self):
             if self.current_time < 60:
@@ -573,7 +690,11 @@ def animation3dyes(all_data):
 
                 self.update_coordinates_display()
                 self.update_time_display()
-                self.canvas.draw_idle()
+                if self._alive:
+                    try:
+                        self.canvas.draw_idle()
+                    except RuntimeError:
+                        pass
 
                 self.pause_btn.setText("Старт")
                 self.pause_btn.setStyleSheet("background-color: #90EE90;")
@@ -583,23 +704,115 @@ def animation3dyes(all_data):
                 self.is_running = True
                 self.timer.start(50)
 
-        def toggle_size_mode(self):
-            self.size_mode = not self.size_mode
+        def toggle_size_mode(self, state):
+            self.size_mode = bool(state)
             if self.size_mode:
-                self.size_mode_btn.setText("Размер тел: вкл")
-                self.size_mode_btn.setStyleSheet("background-color: #ADD8E6;")
                 for i, scatter in enumerate(self.scatters):
                     scatter.set_sizes([self.body_sizes_3d[i]])
                 for i, scatter_2d in enumerate(self.scatters_2d):
                     scatter_2d.set_markersize(self.body_sizes_2d[i])
             else:
-                self.size_mode_btn.setText("Размер тел: выкл")
-                self.size_mode_btn.setStyleSheet("")
                 for scatter in self.scatters:
                     scatter.set_sizes([100])
                 for scatter_2d in self.scatters_2d:
                     scatter_2d.set_markersize(6)
-            self.canvas.draw_idle()
+            if self._alive:
+                try:
+                    self.canvas.draw_idle()
+                except RuntimeError:
+                    pass
+
+        def _recompute_sizes(self):
+            import math
+            radii_now = [b[7] if len(b) > 7 else 1.0 for b in self.bodies]
+            min_r = min(radii_now)
+            max_r = max(radii_now)
+            def rs(r):
+                if max_r == min_r:
+                    return 100
+                log_min = math.log10(max(min_r, 1e-30))
+                log_max = math.log10(max(max_r, 1e-30))
+                if log_max == log_min:
+                    return 100
+                t = (math.log10(max(r, 1e-30)) - log_min) / (log_max - log_min)
+                return 30 + 470 * t
+            self.body_sizes_3d = [rs(r) for r in radii_now]
+            self.body_sizes_2d = [max(3, math.sqrt(s) * 0.5) for s in self.body_sizes_3d]
+
+        def _merge_bodies(self, i, j):
+            bi, bj = self.bodies[i], self.bodies[j]
+            mi, mj = bi[6], bj[6]
+            total = mi + mj
+            for k in range(3):
+                bi[k] = (mi * bi[k] + mj * bj[k]) / total
+            for k in range(3, 6):
+                bi[k] = (mi * bi[k] + mj * bj[k]) / total
+            bi[6] = total
+            if len(bi) > 7 and len(bj) > 7:
+                bi[7] = (bi[7] ** 3 + bj[7] ** 3) ** (1.0 / 3.0)
+
+            self.bodies.pop(j)
+            self.trajectories.pop(j)
+            self.n_bodies -= 1
+            if j < len(self.collision_radii):
+                merged_r = bi[7] if len(bi) > 7 else self.collision_radii[i]
+                self.collision_radii[i] = max(merged_r, self.collision_radii[i])
+                self.collision_radii.pop(j)
+
+            try:
+                self.scatters[j].remove()
+            except Exception:
+                pass
+            self.scatters.pop(j)
+
+            try:
+                self.lines[j].remove()
+            except Exception:
+                pass
+            self.lines.pop(j)
+
+            try:
+                self.scatters_2d[j].remove()
+            except Exception:
+                pass
+            self.scatters_2d.pop(j)
+
+            try:
+                self.lines_2d[j].remove()
+            except Exception:
+                pass
+            self.lines_2d.pop(j)
+
+            self._recompute_sizes()
+            if self.size_mode:
+                for k, sc in enumerate(self.scatters):
+                    sc.set_sizes([self.body_sizes_3d[k]])
+                for k, sc2 in enumerate(self.scatters_2d):
+                    sc2.set_markersize(self.body_sizes_2d[k])
+
+            legend = self.ax.legend(fontsize=7, loc='upper left')
+            for handle in legend.legend_handles:
+                handle.set_sizes([80])
+
+            self.setup_table()
+
+        def handle_collisions(self):
+            min_pd = getattr(self, 'min_pair_distances', {})
+            i = 0
+            while i < self.n_bodies:
+                j = i + 1
+                while j < self.n_bodies:
+                    ri = self.collision_radii[i] if i < len(self.collision_radii) else 0.0
+                    rj = self.collision_radii[j] if j < len(self.collision_radii) else 0.0
+                    # Используем минимальное расстояние за кадр (защита от туннелирования)
+                    min_r = min_pd.get((i, j), float('inf'))
+                    if min_r < ri + rj:
+                        # Всегда сливаем j в i (j > i → индексы не сдвигаются)
+                        self._merge_bodies(i, j)
+                        self.min_pair_distances = {}
+                    else:
+                        j += 1
+                i += 1
 
     dialog = AnimationDialog(all_data)
     dialog.exec_()
@@ -643,42 +856,43 @@ class ObjectEditor(QWidget):
         }
         self.init_ui()
 
+    def _make_field(self, value):
+        field = ScientificLineEdit()
+        field.set_value(value)
+        field.setFixedWidth(180)
+        return field
+
     def init_ui(self):
         layout = QFormLayout()
+        layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
 
         self.name_edit = QLineEdit(self.obj_data['name'])
+        self.name_edit.setFixedWidth(180)
         layout.addRow("Имя:", self.name_edit)
 
-        self.x_edit = ScientificLineEdit()
-        self.x_edit.set_value(self.obj_data['x'])
+        self.x_edit = self._make_field(self.obj_data['x'])
         layout.addRow("X:", self.x_edit)
 
-        self.y_edit = ScientificLineEdit()
-        self.y_edit.set_value(self.obj_data['y'])
+        self.y_edit = self._make_field(self.obj_data['y'])
         layout.addRow("Y:", self.y_edit)
 
-        self.z_edit = ScientificLineEdit()
-        self.z_edit.set_value(self.obj_data['z'])
+        self.z_edit = self._make_field(self.obj_data['z'])
         layout.addRow("Z:", self.z_edit)
 
-        self.vx_edit = ScientificLineEdit()
-        self.vx_edit.set_value(self.obj_data['vx'])
+        self.vx_edit = self._make_field(self.obj_data['vx'])
         layout.addRow("Vx:", self.vx_edit)
 
-        self.vy_edit = ScientificLineEdit()
-        self.vy_edit.set_value(self.obj_data['vy'])
+        self.vy_edit = self._make_field(self.obj_data['vy'])
         layout.addRow("Vy:", self.vy_edit)
 
-        self.vz_edit = ScientificLineEdit()
-        self.vz_edit.set_value(self.obj_data['vz'])
+        self.vz_edit = self._make_field(self.obj_data['vz'])
         layout.addRow("Vz:", self.vz_edit)
 
-        self.mass_edit = ScientificLineEdit()
-        self.mass_edit.set_value(self.obj_data['mass'])
+        self.mass_edit = self._make_field(self.obj_data['mass'])
         layout.addRow("Масса:", self.mass_edit)
 
-        self.radius_edit = ScientificLineEdit()
-        self.radius_edit.set_value(self.obj_data.get('radius', 1.0))
+        self.radius_edit = self._make_field(self.obj_data.get('radius', 1.0))
         layout.addRow("Радиус:", self.radius_edit)
 
         self.setLayout(layout)
@@ -1045,8 +1259,12 @@ class SimulationMenu(QMainWindow):
         add_obj_btn.clicked.connect(self.add_object)
         remove_obj_btn = QPushButton("Удалить объект")
         remove_obj_btn.clicked.connect(self.remove_object)
+        presets_btn = QPushButton("Пресеты")
+        presets_btn.clicked.connect(self.open_presets_dialog)
+        presets_btn.setToolTip("Загрузить готовый набор тел")
         obj_buttons_layout.addWidget(add_obj_btn)
         obj_buttons_layout.addWidget(remove_obj_btn)
+        obj_buttons_layout.addWidget(presets_btn)
         left_panel.addLayout(obj_buttons_layout)
 
         self.object_editor_area = QScrollArea()
@@ -1108,6 +1326,78 @@ class SimulationMenu(QMainWindow):
         self.object_editor_area.setWidget(editor)
         self.current_editor = editor
         self.current_editor_index = index
+
+    def open_presets_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Выбор пресета")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(400)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Выберите готовый набор тел:"))
+
+        presets_list = QListWidget()
+        for name in PRESETS:
+            presets_list.addItem(name)
+        layout.addWidget(presets_list)
+
+        desc_label = QLabel("")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #555; font-size: 11px; padding: 4px;")
+        layout.addWidget(desc_label)
+
+        descriptions = {
+            'Двойная звезда': 'Две звезды по 2 солнечных массы на круговой орбите. dt=1 сутки.',
+            'Земля — Луна': 'Система Земля–Луна с реальными массами и орбитой. dt=1 час.',
+            'Солнце — Земля — Юпитер': 'Солнце, Земля и Юпитер с реальными параметрами. dt=1 сутки.',
+            'Три тела (треугольник Лагранжа)': 'Три равные звезды в вершинах равностороннего треугольника — устойчивое решение Лагранжа. dt=1 час.',
+        }
+
+        def on_select():
+            item = presets_list.currentItem()
+            if item:
+                desc_label.setText(descriptions.get(item.text(), ''))
+
+        presets_list.currentItemChanged.connect(lambda cur, _: on_select())
+
+        warn_label = QLabel("Текущие объекты будут заменены.")
+        warn_label.setStyleSheet("color: #c00; font-weight: bold; padding: 2px;")
+        layout.addWidget(warn_label)
+
+        buttons = QHBoxLayout()
+        load_btn = QPushButton("Загрузить")
+        cancel_btn = QPushButton("Отмена")
+        buttons.addWidget(load_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        dialog.setLayout(layout)
+
+        cancel_btn.clicked.connect(dialog.reject)
+
+        def do_load():
+            item = presets_list.currentItem()
+            if not item:
+                QMessageBox.warning(dialog, "Ошибка", "Выберите пресет из списка")
+                return
+            preset = PRESETS[item.text()]
+            import copy
+            self.objects = copy.deepcopy(preset['objects'])
+            self.settings['dt'] = preset['dt']
+            if hasattr(self, 'current_editor'):
+                del self.current_editor
+            if hasattr(self, 'current_editor_index'):
+                del self.current_editor_index
+            self.object_editor_area.setWidget(None)
+            self.load_objects()
+            self.update_settings_display()
+            self.save_current_state(silent=True)
+            dialog.accept()
+
+        load_btn.clicked.connect(do_load)
+        presets_list.doubleClicked.connect(do_load)
+
+        dialog.exec_()
 
     def add_object(self):
         new_obj = {
