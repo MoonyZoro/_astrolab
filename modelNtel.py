@@ -516,6 +516,7 @@ def animation3dyes(all_data):
 
                             f = G * new_l[j][6] / (r_sq_soft * r_soft)
 
+
                             acc_x += f * dx
                             acc_y += f * dy
                             acc_z += f * dz
